@@ -1,0 +1,11 @@
+# YouTube Data API v3 Client Library
+google-api-python-client==2.110.0
+
+# Progress bar for terminal
+tqdm==4.66.1
+
+# Environment variable management
+python-dotenv==1.0.0
+
+# Supabase client library for database integration
+supabase==2.3.4
