@@ -174,6 +174,8 @@ def prepare_comment_record(comment: Dict, channel_id: str) -> Dict:
     Prepare a comment record for database insertion.
 
     Maps JSON fields to database columns and adds channel_id.
+    Note: PostgreSQL converts unquoted column names to lowercase,
+    so we use lowercase keys for Supabase PostgREST API.
 
     Args:
         comment: Comment dictionary from JSON
@@ -185,10 +187,10 @@ def prepare_comment_record(comment: Dict, channel_id: str) -> Dict:
     return {
         'channel_id': channel_id,
         'comment': comment.get('comment'),
-        'videoTitle': comment.get('videoTitle'),
-        'videoLink': comment.get('videoLink'),
-        'datePostComment': comment.get('datePostComment'),
-        'likesCount': comment.get('likesCount', 0),
+        'videotitle': comment.get('videoTitle'),
+        'videolink': comment.get('videoLink'),
+        'datepostcomment': comment.get('datePostComment'),
+        'likescount': comment.get('likesCount', 0),
     }
 
 
@@ -197,6 +199,8 @@ def prepare_sub_comment_record(sub_comment: Dict, channel_id: str) -> Dict:
     Prepare a sub-comment (reply) record for database insertion.
 
     Maps JSON fields to database columns and adds channel_id.
+    Note: PostgreSQL converts unquoted column names to lowercase,
+    so we use lowercase keys for Supabase PostgREST API.
 
     Args:
         sub_comment: Sub-comment dictionary from JSON
@@ -207,12 +211,12 @@ def prepare_sub_comment_record(sub_comment: Dict, channel_id: str) -> Dict:
     """
     return {
         'channel_id': channel_id,
-        'subComment': sub_comment.get('subComment'),
-        'parentCommentId': sub_comment.get('parentCommentId'),
-        'videoTitle': sub_comment.get('videoTitle'),
-        'videoLinkId': sub_comment.get('videoLinkId'),
-        'datePostSubComment': sub_comment.get('datePostSubComment'),
-        'likeCount': sub_comment.get('likeCount', 0),
+        'subcomment': sub_comment.get('subComment'),
+        'parentcommentid': sub_comment.get('parentCommentId'),
+        'videotitle': sub_comment.get('videoTitle'),
+        'videolinkid': sub_comment.get('videoLinkId'),
+        'datepostsubcomment': sub_comment.get('datePostSubComment'),
+        'likecount': sub_comment.get('likeCount', 0),
     }
 
 
