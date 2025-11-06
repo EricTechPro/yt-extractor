@@ -624,13 +624,18 @@ def fetch_video_comments(youtube, video_id, video_title, video_link):
                 # Structure: thread['snippet']['topLevelComment']['snippet']
                 top_level_comment = thread['snippet']['topLevelComment']['snippet']
 
+                # Extract YouTube's unique comment ID for establishing relationships
+                youtube_comment_id = thread['snippet']['topLevelComment']['id']
+
                 # Extract required fields from the comment snippet
                 comment_text = top_level_comment['textDisplay']
                 date_posted = top_level_comment['publishedAt']
                 likes_count = top_level_comment['likeCount']
 
                 # Create comment dictionary matching the exact structure from prompt.md
+                # Added youtubeCommentId for database foreign key relationships
                 comment_obj = {
+                    "youtubeCommentId": youtube_comment_id,
                     "comment": comment_text,
                     "videoTitle": video_title,
                     "videoLink": video_link,
@@ -643,8 +648,7 @@ def fetch_video_comments(youtube, video_id, video_title, video_link):
                 # If totalReplyCount > 0, we need to fetch replies separately
                 total_reply_count = thread['snippet']['totalReplyCount']
                 if total_reply_count > 0:
-                    parent_comment_id = thread['snippet']['topLevelComment']['id']
-                    threads_with_replies.append((parent_comment_id, total_reply_count))
+                    threads_with_replies.append((youtube_comment_id, total_reply_count))
 
             # Check if there are more pages to fetch
             # If nextPageToken is absent, we've reached the last page
@@ -712,6 +716,9 @@ def fetch_comment_replies(youtube, parent_comment_id, video_title, video_id):
                 # Structure: reply['snippet']
                 reply_snippet = reply['snippet']
 
+                # Extract YouTube's unique reply ID for this sub-comment
+                youtube_reply_id = reply['id']
+
                 # Extract required fields from the reply snippet
                 sub_comment_text = reply_snippet['textDisplay']
                 date_posted = reply_snippet['publishedAt']
@@ -719,7 +726,9 @@ def fetch_comment_replies(youtube, parent_comment_id, video_title, video_id):
 
                 # Create sub-comment dictionary matching the exact structure from prompt.md
                 # Note: Field names differ from comments file
+                # Added youtubeCommentId for the reply's own unique identifier
                 sub_comment_obj = {
+                    "youtubeCommentId": youtube_reply_id,
                     "subComment": sub_comment_text,
                     "parentCommentId": parent_comment_id,
                     "videoTitle": video_title,

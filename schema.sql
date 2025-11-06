@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS comments (
     -- Extracted from JSON filename pattern: [CHANNEL_ID]_comments.json
     channel_id TEXT NOT NULL,
 
+    -- YouTube's unique comment identifier for establishing relationships
+    youtube_comment_id TEXT UNIQUE,  -- YouTube's comment ID (e.g., "Ugye9E0Hgg9tSmVirzZ4AaABAg")
+
     -- Comment content and metadata (from JSON fields)
     comment TEXT,                    -- Comment text content
     videoTitle TEXT,                 -- Title of the video
@@ -54,17 +57,18 @@ CREATE TABLE IF NOT EXISTS comments (
 -- Index for efficient queries filtering by channel
 CREATE INDEX IF NOT EXISTS idx_comments_channel_id ON comments(channel_id);
 
+-- Index for efficient lookups by YouTube comment ID (used in FK relationships)
+CREATE INDEX IF NOT EXISTS idx_comments_youtube_id ON comments(youtube_comment_id);
+
 -- ============================================================================
 -- Table: sub_comments
 -- ============================================================================
 -- Stores replies to parent comments on YouTube videos.
 -- Fields map directly to JSON output from [CHANNEL_ID]_sub_comments.json
 --
--- IMPORTANT: parentCommentId references YouTube's internal comment ID system,
--- NOT the UUID primary key in the comments table. YouTube's comment IDs are
--- opaque strings that cannot be reliably joined to our database records.
--- If you need to establish relationships, consider storing parentCommentId
--- in the comments table and using it for joins.
+-- RELATIONSHIP: parentCommentId references comments.youtube_comment_id
+-- This establishes a proper foreign key relationship between replies and
+-- their parent comments, enabling queries like "get all replies for comment X"
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS sub_comments (
@@ -75,20 +79,32 @@ CREATE TABLE IF NOT EXISTS sub_comments (
     -- Extracted from JSON filename pattern: [CHANNEL_ID]_sub_comments.json
     channel_id TEXT NOT NULL,
 
+    -- YouTube's unique identifier for this reply
+    youtube_comment_id TEXT UNIQUE,  -- YouTube's reply ID (e.g., "UgxigSlcDUNv4vZ5FwN4AaABAg.A1B2C3D4E5F6G7H8I9J0")
+
     -- Reply content and metadata (from JSON fields)
     subComment TEXT,                      -- Reply text content
-    parentCommentId TEXT,                 -- YouTube's parent comment ID (not our UUID!)
+    parentCommentId TEXT,                 -- YouTube's parent comment ID - FK to comments.youtube_comment_id
     videoTitle TEXT,                      -- Title of the video
     videoLinkId TEXT,                     -- YouTube video ID (just the ID, not full URL)
     datePostSubComment TIMESTAMPTZ,       -- When the reply was posted (ISO 8601 format)
     likeCount INTEGER DEFAULT 0,          -- Number of likes on the reply
 
     -- Audit field: When this record was inserted into the database
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+
+    -- Foreign key constraint to establish parent-child relationship
+    CONSTRAINT fk_parent_comment
+        FOREIGN KEY (parentCommentId)
+        REFERENCES comments(youtube_comment_id)
+        ON DELETE CASCADE  -- If parent comment deleted, delete replies too
 );
 
 -- Index for efficient queries filtering by channel
 CREATE INDEX IF NOT EXISTS idx_sub_comments_channel_id ON sub_comments(channel_id);
+
+-- Index for efficient lookups by parent comment (used in JOIN queries)
+CREATE INDEX IF NOT EXISTS idx_sub_comments_parent_id ON sub_comments(parentCommentId);
 
 -- ============================================================================
 -- Schema Creation Complete

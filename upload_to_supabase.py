@@ -186,6 +186,7 @@ def prepare_comment_record(comment: Dict, channel_id: str) -> Dict:
     """
     return {
         'channel_id': channel_id,
+        'youtube_comment_id': comment.get('youtubeCommentId'),
         'comment': comment.get('comment'),
         'videotitle': comment.get('videoTitle'),
         'videolink': comment.get('videoLink'),
@@ -211,6 +212,7 @@ def prepare_sub_comment_record(sub_comment: Dict, channel_id: str) -> Dict:
     """
     return {
         'channel_id': channel_id,
+        'youtube_comment_id': sub_comment.get('youtubeCommentId'),
         'subcomment': sub_comment.get('subComment'),
         'parentcommentid': sub_comment.get('parentCommentId'),
         'videotitle': sub_comment.get('videoTitle'),
