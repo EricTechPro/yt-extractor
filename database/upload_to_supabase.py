@@ -134,9 +134,10 @@ def find_channel_files(output_dir: str) -> Dict[str, Dict[str, str]]:
         output_dir: Directory containing JSON files
 
     Returns:
-        Dictionary mapping channel_id to dict with 'comments' and 'sub_comments' file paths
+        Dictionary mapping channel_id to dict with 'videos', 'comments', and 'sub_comments' file paths
         Example: {
             'UCxxxxxx': {
+                'videos': 'output/UCxxxxxx_videos.json',
                 'comments': 'output/UCxxxxxx_comments.json',
                 'sub_comments': 'output/UCxxxxxx_sub_comments.json'
             }
@@ -152,16 +153,23 @@ def find_channel_files(output_dir: str) -> Dict[str, Dict[str, str]]:
         if not filename.endswith('.json'):
             continue
 
-        channel_id = extract_channel_id_from_filename(filename)
-        if not channel_id:
+        # Extract channel ID from filename pattern
+        # Patterns: [CHANNEL_ID]_videos.json, [CHANNEL_ID]_comments.json, [CHANNEL_ID]_sub_comments.json
+        pattern = r"^(.+?)_(?:videos|sub_comments|comments)\.json$"
+        match = re.match(pattern, filename)
+        if not match:
             continue
 
+        channel_id = match.group(1)
+
         if channel_id not in channels:
-            channels[channel_id] = {'comments': None, 'sub_comments': None}
+            channels[channel_id] = {'videos': None, 'comments': None, 'sub_comments': None}
 
         file_path = os.path.join(output_dir, filename)
 
-        if filename.endswith('_sub_comments.json'):
+        if filename.endswith('_videos.json'):
+            channels[channel_id]['videos'] = file_path
+        elif filename.endswith('_sub_comments.json'):
             channels[channel_id]['sub_comments'] = file_path
         elif filename.endswith('_comments.json'):
             channels[channel_id]['comments'] = file_path
@@ -169,11 +177,39 @@ def find_channel_files(output_dir: str) -> Dict[str, Dict[str, str]]:
     return channels
 
 
+def prepare_video_record(video: Dict, channel_id: str) -> Dict:
+    """
+    Prepare a video record for database insertion.
+
+    Maps JSON fields to database columns (normalized schema).
+    Note: PostgreSQL converts unquoted column names to lowercase,
+    so we use lowercase keys for Supabase PostgREST API.
+
+    Args:
+        video: Video dictionary from JSON
+        channel_id: YouTube channel ID
+
+    Returns:
+        Dictionary ready for database insertion
+    """
+    return {
+        'youtube_video_id': video.get('youtubeVideoId'),
+        'channel_id': channel_id,
+        'title': video.get('title'),
+        'description': video.get('description'),
+        'tags': video.get('tags', []),
+        'published_at': video.get('publishedAt'),
+        'channel_title': video.get('channelTitle'),
+        'duration': video.get('duration'),
+        'view_count': video.get('viewCount', 0),
+    }
+
+
 def prepare_comment_record(comment: Dict, channel_id: str) -> Dict:
     """
     Prepare a comment record for database insertion.
 
-    Maps JSON fields to database columns and adds channel_id.
+    Maps JSON fields to database columns (normalized schema).
     Note: PostgreSQL converts unquoted column names to lowercase,
     so we use lowercase keys for Supabase PostgREST API.
 
@@ -185,13 +221,12 @@ def prepare_comment_record(comment: Dict, channel_id: str) -> Dict:
         Dictionary ready for database insertion
     """
     return {
-        'channel_id': channel_id,
         'youtube_comment_id': comment.get('youtubeCommentId'),
+        'video_id': comment.get('videoId'),
+        'channel_id': channel_id,
         'comment': comment.get('comment'),
-        'videotitle': comment.get('videoTitle'),
-        'videolink': comment.get('videoLink'),
-        'datepostcomment': comment.get('datePostComment'),
-        'likescount': comment.get('likesCount', 0),
+        'date_post_comment': comment.get('datePostComment'),
+        'likes_count': comment.get('likesCount', 0),
     }
 
 
@@ -199,7 +234,7 @@ def prepare_sub_comment_record(sub_comment: Dict, channel_id: str) -> Dict:
     """
     Prepare a sub-comment (reply) record for database insertion.
 
-    Maps JSON fields to database columns and adds channel_id.
+    Maps JSON fields to database columns (normalized schema).
     Note: PostgreSQL converts unquoted column names to lowercase,
     so we use lowercase keys for Supabase PostgREST API.
 
@@ -211,14 +246,13 @@ def prepare_sub_comment_record(sub_comment: Dict, channel_id: str) -> Dict:
         Dictionary ready for database insertion
     """
     return {
-        'channel_id': channel_id,
         'youtube_comment_id': sub_comment.get('youtubeCommentId'),
-        'subcomment': sub_comment.get('subComment'),
-        'parentcommentid': sub_comment.get('parentCommentId'),
-        'videotitle': sub_comment.get('videoTitle'),
-        'videolinkid': sub_comment.get('videoLinkId'),
-        'datepostsubcomment': sub_comment.get('datePostSubComment'),
-        'likecount': sub_comment.get('likeCount', 0),
+        'video_id': sub_comment.get('videoId'),
+        'parent_comment_id': sub_comment.get('parentCommentId'),
+        'channel_id': channel_id,
+        'sub_comment': sub_comment.get('subComment'),
+        'date_post_sub_comment': sub_comment.get('datePostSubComment'),
+        'like_count': sub_comment.get('likeCount', 0),
     }
 
 
@@ -278,6 +312,87 @@ def batch_insert_records(
     return successful, failed, errors
 
 
+def run_migration(migration_file: str) -> bool:
+    """
+    Run database migration from SQL file.
+
+    Args:
+        migration_file: Path to migration SQL file
+
+    Returns:
+        True if migration successful, False otherwise
+    """
+    try:
+        print(f"\n{'=' * 70}")
+        print("Running Database Migration")
+        print(f"{'=' * 70}")
+        print(f"Migration file: {migration_file}")
+
+        if not os.path.exists(migration_file):
+            print(f"❌ Migration file not found: {migration_file}")
+            return False
+
+        # Read migration SQL
+        with open(migration_file, 'r', encoding='utf-8') as f:
+            migration_sql = f.read()
+
+        print("\n⚠️  WARNING: This migration will DROP existing tables!")
+        print("   - sub_comments table will be DROPPED")
+        print("   - comments table will be DROPPED")
+        print("   - All existing data will be LOST")
+        print()
+
+        confirm = input("Are you sure you want to proceed? (yes/no): ").strip().lower()
+        if confirm != 'yes':
+            print("❌ Migration cancelled by user")
+            return False
+
+        print("\n🔄 Executing migration...")
+
+        # Execute migration SQL
+        # Note: Supabase Python client doesn't have a direct SQL execution method for the service role
+        # We'll use the rpc method to execute raw SQL
+        try:
+            # Split SQL into individual statements (simple split by semicolon)
+            statements = [stmt.strip() for stmt in migration_sql.split(';') if stmt.strip() and not stmt.strip().startswith('--')]
+
+            for i, statement in enumerate(statements, 1):
+                if statement:
+                    # Skip comments and empty statements
+                    if statement.startswith('--') or not statement.strip():
+                        continue
+
+                    print(f"   Executing statement {i}/{len(statements)}...")
+                    supabase.rpc('exec_sql', {'query': statement}).execute()
+
+            print("\n✅ Migration completed successfully!")
+            print(f"{'=' * 70}\n")
+            return True
+
+        except Exception as e:
+            # If rpc doesn't work, inform user to run SQL manually
+            print(f"\n⚠️  Automatic migration via Python client not supported.")
+            print(f"   Please run the migration manually in Supabase SQL Editor:")
+            print(f"\n   1. Go to https://app.supabase.com/")
+            print(f"   2. Select your project")
+            print(f"   3. Go to SQL Editor")
+            print(f"   4. Paste the contents of: {migration_file}")
+            print(f"   5. Execute the SQL")
+            print()
+
+            proceed = input("Have you run the migration manually? (yes/no): ").strip().lower()
+            if proceed == 'yes':
+                print("✅ Migration confirmed!")
+                return True
+            else:
+                print("❌ Please run the migration before uploading data")
+                return False
+
+    except Exception as e:
+        print(f"❌ Migration failed: {e}")
+        return False
+
+
 def check_existing_records(table_name: str, channel_id: str) -> int:
     """
     Check how many records already exist for a channel.
@@ -290,8 +405,14 @@ def check_existing_records(table_name: str, channel_id: str) -> int:
         Count of existing records
     """
     try:
+        # Use count query with the new schema (no 'id' column, use PKs instead)
+        if table_name == 'videos':
+            pk_column = "youtube_video_id"
+        else:
+            pk_column = "youtube_comment_id"
+
         response = supabase.table(table_name).select(
-            "id", count="exact"
+            pk_column, count="exact"
         ).eq("channel_id", channel_id).execute()
 
         return response.count if response.count is not None else 0
@@ -302,15 +423,22 @@ def check_existing_records(table_name: str, channel_id: str) -> int:
 
 def upload_channel_data(
     channel_id: str,
+    videos_file: Optional[str],
     comments_file: Optional[str],
     sub_comments_file: Optional[str],
     dry_run: bool = False
 ) -> Dict[str, int]:
     """
-    Upload comments and sub-comments for a single channel.
+    Upload videos, comments, and sub-comments for a single channel.
+
+    IMPORTANT: Upload order matters due to foreign key constraints:
+    1. Videos (parent table)
+    2. Comments (references videos)
+    3. Sub-comments (references both videos and comments)
 
     Args:
         channel_id: YouTube channel ID
+        videos_file: Path to videos JSON file (or None)
         comments_file: Path to comments JSON file (or None)
         sub_comments_file: Path to sub-comments JSON file (or None)
         dry_run: If True, validate but don't insert data
@@ -319,10 +447,13 @@ def upload_channel_data(
         Dictionary with upload statistics
     """
     stats = {
+        'videos_uploaded': 0,
+        'videos_failed': 0,
         'comments_uploaded': 0,
         'comments_failed': 0,
         'sub_comments_uploaded': 0,
         'sub_comments_failed': 0,
+        'videos_existing': 0,
         'comments_existing': 0,
         'sub_comments_existing': 0,
     }
@@ -330,6 +461,51 @@ def upload_channel_data(
     print(f"\n{'=' * 70}")
     print(f"Processing Channel: {channel_id}")
     print(f"{'=' * 70}")
+
+    # Step 1: Upload videos (parent table - must be first)
+    if videos_file and os.path.exists(videos_file):
+        print(f"\n📄 Loading videos from: {videos_file}")
+        videos_data = load_json_file(videos_file)
+
+        if videos_data:
+            print(f"   Found {len(videos_data)} videos")
+
+            # Check existing records
+            existing_count = check_existing_records('videos', channel_id)
+            stats['videos_existing'] = existing_count
+
+            if existing_count > 0:
+                print(f"   ⚠️  Warning: {existing_count} video records already exist for this channel")
+
+            if not dry_run:
+                # Prepare records
+                prepared_videos = [
+                    prepare_video_record(video, channel_id)
+                    for video in videos_data
+                ]
+
+                # Insert in batches
+                successful, failed, errors = batch_insert_records(
+                    'videos',
+                    prepared_videos,
+                    CONFIG['batch_size'],
+                    f"Uploading videos for {channel_id}"
+                )
+
+                stats['videos_uploaded'] = successful
+                stats['videos_failed'] = failed
+
+                print(f"\n   ✅ Uploaded: {successful} videos")
+                if failed > 0:
+                    print(f"   ❌ Failed: {failed} videos")
+            else:
+                print(f"   🔍 DRY RUN: Would upload {len(videos_data)} videos")
+        else:
+            print(f"   ⚠️  No videos found in file")
+    else:
+        print(f"\n   ⏭️  No videos file found")
+
+    # Step 2: Upload top-level comments (requires videos to exist)
 
     # Upload top-level comments
     if comments_file and os.path.exists(comments_file):
@@ -481,6 +657,19 @@ Examples:
         help=f'Directory containing JSON files (default: {CONFIG["output_dir"]})'
     )
 
+    parser.add_argument(
+        '--run-migration',
+        action='store_true',
+        help='Run database migration before uploading data'
+    )
+
+    parser.add_argument(
+        '--migration-file',
+        type=str,
+        default='database/migrations/001_normalized_schema.sql',
+        help='Path to migration SQL file (default: database/migrations/001_normalized_schema.sql)'
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -496,7 +685,7 @@ Examples:
 
     # Print header
     print("\n" + "=" * 70)
-    print("YouTube Comments → Supabase Upload Script")
+    print("YouTube Comments → Supabase Upload Script (Normalized Schema)")
     print("=" * 70)
     print(f"Supabase URL: {SUPABASE_URL}")
     print(f"Output Directory: {CONFIG['output_dir']}")
@@ -505,12 +694,19 @@ Examples:
         print("Mode: DRY RUN (no data will be inserted)")
     print("=" * 70)
 
+    # Run migration if requested
+    if args.run_migration and not args.dry_run:
+        migration_success = run_migration(args.migration_file)
+        if not migration_success:
+            print("\n❌ Migration failed or was cancelled. Aborting upload.")
+            return
+
     # Find channel files
     all_channels = find_channel_files(CONFIG['output_dir'])
 
     if not all_channels:
         print(f"\n❌ No channel JSON files found in '{CONFIG['output_dir']}'")
-        print("   Make sure you've run main.py to extract comments first")
+        print("   Make sure you've run src/main.py to extract comments first")
         return
 
     print(f"\nFound {len(all_channels)} channel(s) with data:")
@@ -532,6 +728,8 @@ Examples:
 
     # Process each channel
     total_stats = {
+        'videos_uploaded': 0,
+        'videos_failed': 0,
         'comments_uploaded': 0,
         'comments_failed': 0,
         'sub_comments_uploaded': 0,
@@ -541,12 +739,15 @@ Examples:
     for channel_id, files in channels_to_process.items():
         stats = upload_channel_data(
             channel_id,
+            files['videos'],
             files['comments'],
             files['sub_comments'],
             dry_run=args.dry_run
         )
 
         # Aggregate statistics
+        total_stats['videos_uploaded'] += stats['videos_uploaded']
+        total_stats['videos_failed'] += stats['videos_failed']
         total_stats['comments_uploaded'] += stats['comments_uploaded']
         total_stats['comments_failed'] += stats['comments_failed']
         total_stats['sub_comments_uploaded'] += stats['sub_comments_uploaded']
@@ -557,6 +758,10 @@ Examples:
     print("Upload Summary")
     print(f"{'=' * 70}")
     print(f"Channels Processed: {len(channels_to_process)}")
+    print(f"\nVideos:")
+    print(f"  ✅ Uploaded: {total_stats['videos_uploaded']}")
+    if total_stats['videos_failed'] > 0:
+        print(f"  ❌ Failed: {total_stats['videos_failed']}")
     print(f"\nComments:")
     print(f"  ✅ Uploaded: {total_stats['comments_uploaded']}")
     if total_stats['comments_failed'] > 0:

@@ -104,6 +104,7 @@ quota_used = 0
 QUOTA_COSTS = {
     'channels.list': 1,
     'playlistItems.list': 1,
+    'videos.list': 1,
     'commentThreads.list': 1,
     'comments.list': 1,
     'search.list': 100
@@ -384,44 +385,73 @@ def get_channel_id_from_url(url):
             raise ValueError(f"Error parsing URL: {str(e)}")
 
 
-def load_state(comments_file):
+def load_videos_state(videos_file):
     """
-    Load existing state from comments file to support resumability.
+    Load existing state from videos file to support resumability.
 
-    This function reads the existing comments JSON file (if it exists) and extracts:
-    1. A set of video links that have already been processed (for skipping)
-    2. The existing list of comments to append new comments to
+    This function reads the existing videos JSON file (if it exists) and extracts:
+    1. A set of video IDs that have already been processed (for skipping)
+    2. The existing list of videos to append new videos to
 
     This enables the script to resume from where it left off if interrupted,
     avoiding duplicate API calls and processing.
 
     Parameters:
-        comments_file (str): Path to the [CHANNEL_ID]_comments.json file
+        videos_file (str): Path to the [CHANNEL_ID]_videos.json file
 
     Returns:
-        tuple: (processed_videos_set, existing_comments_list)
-            - processed_videos_set (set): Set of video links already processed
-            - existing_comments_list (list): List of existing comment dictionaries
+        tuple: (processed_videos_set, existing_videos_list)
+            - processed_videos_set (set): Set of video IDs already processed
+            - existing_videos_list (list): List of existing video dictionaries
     """
-    if os.path.exists(comments_file):
+    if os.path.exists(videos_file):
         try:
-            with open(comments_file, 'r', encoding='utf-8') as f:
-                existing_comments = json.load(f)
+            with open(videos_file, 'r', encoding='utf-8') as f:
+                existing_videos = json.load(f)
 
-            # Extract all videoLink values from existing comments to create a set of processed videos
-            # Each comment object has a 'videoLink' field (e.g., "https://www.youtube.com/watch?v=video_id")
-            processed_videos_set = set(comment['videoLink'] for comment in existing_comments)
+            # Extract all youtubeVideoId values from existing videos to create a set of processed videos
+            # Each video object has a 'youtubeVideoId' field (YouTube video ID)
+            processed_videos_set = set(video['youtubeVideoId'] for video in existing_videos)
 
-            return processed_videos_set, existing_comments
+            return processed_videos_set, existing_videos
 
         except (json.JSONDecodeError, KeyError) as e:
             # If JSON is corrupted or structure is invalid, log warning and start fresh
-            print(f"Warning: Could not parse existing comments file: {e}")
+            print(f"Warning: Could not parse existing videos file: {e}")
             print("Starting with fresh state...")
             return set(), []
     else:
         # File doesn't exist - this is the first run
         return set(), []
+
+
+def load_comments_state(comments_file):
+    """
+    Load existing comments from file to support resumability.
+
+    This function reads the existing comments JSON file (if it exists) and returns
+    the list of comment objects for appending new comments.
+
+    Parameters:
+        comments_file (str): Path to the [CHANNEL_ID]_comments.json file
+
+    Returns:
+        list: List of existing comment dictionaries (empty list if file doesn't exist)
+    """
+    if os.path.exists(comments_file):
+        try:
+            with open(comments_file, 'r', encoding='utf-8') as f:
+                existing_comments = json.load(f)
+            return existing_comments
+
+        except json.JSONDecodeError as e:
+            # If JSON is corrupted, log warning and start fresh
+            print(f"Warning: Could not parse existing comments file: {e}")
+            print("Starting with fresh comments state...")
+            return []
+    else:
+        # File doesn't exist - this is the first run
+        return []
 
 
 def load_sub_comments(sub_comments_file):
@@ -505,23 +535,100 @@ def get_uploads_playlist_id(youtube, channel_id):
         raise Exception(f"Error retrieving uploads playlist ID: {str(e)}")
 
 
-def get_all_video_ids_and_titles(youtube, playlist_id):
+def fetch_videos_metadata(youtube, video_ids):
     """
-    Fetch all video IDs and titles from a playlist using pagination.
+    Fetch comprehensive metadata for a batch of video IDs.
+
+    This function retrieves detailed video information including title, description, tags,
+    statistics, and content details using the YouTube Data API's videos().list() endpoint.
+    Supports batch requests up to 50 video IDs per call.
+
+    Parameters:
+        youtube (Resource): The YouTube API service object
+        video_ids (list): List of video IDs (up to 50) to fetch metadata for
+
+    Returns:
+        dict: Dictionary mapping video_id -> metadata dictionary with structure:
+              {
+                  "youtubeVideoId": "video_id",
+                  "title": "video title",
+                  "description": "video description",
+                  "tags": ["tag1", "tag2", ...],
+                  "publishedAt": "ISO 8601 timestamp",
+                  "duration": "ISO 8601 duration (e.g., PT1H2M10S)",
+                  "viewCount": 12345,
+                  "channelTitle": "channel name"
+              }
+
+    Raises:
+        Exception: For API-related errors during metadata retrieval
+    """
+    try:
+        # Join video IDs with commas for batch request (max 50 IDs)
+        video_ids_str = ','.join(video_ids)
+
+        # Query the YouTube API for video details
+        response = api_call_with_retry(
+            lambda: youtube.videos().list(
+                part="snippet,contentDetails,statistics",
+                id=video_ids_str
+            ).execute(),
+            operation_type='videos.list'
+        )
+
+        # Build dictionary mapping video ID to metadata
+        videos_metadata = {}
+        for item in response.get('items', []):
+            video_id = item['id']
+            snippet = item['snippet']
+            content_details = item['contentDetails']
+            statistics = item.get('statistics', {})
+
+            # Extract metadata
+            videos_metadata[video_id] = {
+                "youtubeVideoId": video_id,
+                "title": snippet.get('title', ''),
+                "description": snippet.get('description', ''),
+                "tags": snippet.get('tags', []),
+                "publishedAt": snippet.get('publishedAt', ''),
+                "duration": content_details.get('duration', ''),
+                "viewCount": int(statistics.get('viewCount', 0)),
+                "channelTitle": snippet.get('channelTitle', '')
+            }
+
+        return videos_metadata
+
+    except Exception as e:
+        raise Exception(f"Error fetching video metadata: {str(e)}")
+
+
+def get_all_videos(youtube, playlist_id):
+    """
+    Fetch all videos from a playlist with comprehensive metadata.
+
+    This function replaces get_all_video_ids_and_titles() to include full video metadata
+    (description, tags, statistics, etc.) in addition to basic ID and title information.
 
     YouTube playlists can contain thousands of videos, but the API returns results in pages
     with a maximum of 50 items per page. This function handles pagination automatically
-    to retrieve all videos from the playlist.
-
-    The function uses the YouTube Data API's playlistItems().list() endpoint with cursor-based
-    pagination via the nextPageToken parameter.
+    and fetches detailed metadata for each batch of videos.
 
     Parameters:
         youtube (Resource): The YouTube API service object
         playlist_id (str): The uploads playlist ID from get_uploads_playlist_id()
 
     Returns:
-        list: List of dictionaries with structure [{"id": "video_id", "title": "video_title"}, ...]
+        list: List of video metadata dictionaries with structure:
+              [{
+                  "youtubeVideoId": "video_id",
+                  "title": "title",
+                  "description": "description",
+                  "tags": ["tag1", "tag2"],
+                  "publishedAt": "timestamp",
+                  "duration": "PT1H2M10S",
+                  "viewCount": 12345,
+                  "channelTitle": "channel name"
+              }, ...]
 
     Raises:
         Exception: For API-related errors during video retrieval
@@ -535,7 +642,7 @@ def get_all_video_ids_and_titles(youtube, playlist_id):
             # Query the YouTube API for a page of playlist items
             response = api_call_with_retry(
                 lambda: youtube.playlistItems().list(
-                    part="snippet",  # Retrieve video metadata (contains video ID and title)
+                    part="snippet",  # Retrieve basic video metadata
                     playlistId=playlist_id,  # Specify which playlist to query
                     maxResults=CONFIG['max_results_videos'],  # Fetch maximum items per page
                     pageToken=next_page_token  # Pagination cursor (None for first page)
@@ -543,19 +650,20 @@ def get_all_video_ids_and_titles(youtube, playlist_id):
                 operation_type='playlistItems.list'
             )
 
-            # Extract video data from the current page
+            # Extract video IDs from current page
+            video_ids = []
             for item in response['items']:
-                # Navigate the response structure to extract video ID and title
-                # Video ID: item['snippet']['resourceId']['videoId']
-                # Video title: item['snippet']['title']
                 video_id = item['snippet']['resourceId']['videoId']
-                video_title = item['snippet']['title']
+                video_ids.append(video_id)
 
-                # Append the video data as a dictionary
-                videos.append({
-                    "id": video_id,
-                    "title": video_title
-                })
+            # Fetch comprehensive metadata for this batch of videos
+            if video_ids:
+                videos_metadata = fetch_videos_metadata(youtube, video_ids)
+
+                # Append metadata to videos list (preserve playlist order)
+                for video_id in video_ids:
+                    if video_id in videos_metadata:
+                        videos.append(videos_metadata[video_id])
 
             # Check if there are more pages to fetch
             # If nextPageToken is absent, we've reached the last page
@@ -570,13 +678,13 @@ def get_all_video_ids_and_titles(youtube, playlist_id):
         raise Exception(f"Error fetching videos from playlist {playlist_id}: {str(e)}")
 
 
-def fetch_video_comments(youtube, video_id, video_title, video_link):
+def fetch_video_comments(youtube, video_id):
     """
     Retrieve all top-level comments for a specific video using pagination.
 
     This function handles the YouTube API's commentThreads().list() endpoint and returns
-    structured comment data ready for JSON serialization. It also identifies which comments
-    have replies to optimize subsequent reply fetching.
+    structured comment data ready for JSON serialization. Comments now reference videos
+    via video_id (FK) instead of embedding video title and link directly.
 
     The function uses cursor-based pagination to handle videos with large numbers of comments,
     fetching up to 100 comments per API call (the maximum allowed by the API).
@@ -584,13 +692,17 @@ def fetch_video_comments(youtube, video_id, video_title, video_link):
     Parameters:
         youtube (Resource): The YouTube API service object
         video_id (str): The video ID to fetch comments from
-        video_title (str): The video title (for comment structure)
-        video_link (str): The full video URL (for comment structure)
 
     Returns:
         tuple: (comments_list, threads_with_replies)
-            - comments_list (list of dict): List of comment dictionaries matching the structure
-              in prompt.md lines 35-50
+            - comments_list (list of dict): List of comment dictionaries with structure:
+              {
+                  "youtubeCommentId": "comment_id",
+                  "videoId": "video_id",
+                  "comment": "comment text",
+                  "datePostComment": "ISO timestamp",
+                  "likesCount": 123
+              }
             - threads_with_replies (list of tuple): List of (parent_comment_id, reply_count)
               for comments that have replies
 
@@ -632,13 +744,12 @@ def fetch_video_comments(youtube, video_id, video_title, video_link):
                 date_posted = top_level_comment['publishedAt']
                 likes_count = top_level_comment['likeCount']
 
-                # Create comment dictionary matching the exact structure from prompt.md
-                # Added youtubeCommentId for database foreign key relationships
+                # Create comment dictionary with normalized structure
+                # videoId is now a FK reference to the videos table
                 comment_obj = {
                     "youtubeCommentId": youtube_comment_id,
+                    "videoId": video_id,
                     "comment": comment_text,
-                    "videoTitle": video_title,
-                    "videoLink": video_link,
                     "datePostComment": date_posted,
                     "likesCount": likes_count
                 }
@@ -664,12 +775,12 @@ def fetch_video_comments(youtube, video_id, video_title, video_link):
         raise
 
 
-def fetch_comment_replies(youtube, parent_comment_id, video_title, video_id):
+def fetch_comment_replies(youtube, parent_comment_id, video_id):
     """
     Retrieve all replies (sub-comments) for a specific parent comment using pagination.
 
     This function handles the YouTube API's comments().list() endpoint and returns
-    structured reply data matching the sub-comments JSON structure.
+    structured reply data with normalized references to videos and parent comments.
 
     The function uses cursor-based pagination to handle comments with large numbers of replies,
     fetching up to 100 replies per API call (the maximum allowed by the API).
@@ -677,18 +788,25 @@ def fetch_comment_replies(youtube, parent_comment_id, video_title, video_id):
     Parameters:
         youtube (Resource): The YouTube API service object
         parent_comment_id (str): The ID of the parent comment to fetch replies for
-        video_title (str): The video title (needed for sub-comment structure)
-        video_id (str): The video ID (needed for videoLinkId field)
+        video_id (str): The video ID (FK reference to videos table)
 
     Returns:
-        list: List of sub-comment dictionaries matching the structure in prompt.md lines 57-74
+        list: List of sub-comment dictionaries with structure:
+              {
+                  "youtubeCommentId": "reply_id",
+                  "videoId": "video_id",
+                  "parentCommentId": "parent_comment_id",
+                  "subComment": "reply text",
+                  "datePostSubComment": "ISO timestamp",
+                  "likeCount": 123
+              }
               Returns empty list if an error occurs
 
     Note:
         Field names differ from the comments file:
         - "subComment" (not "comment")
         - "likeCount" (not "likesCount")
-        - "videoLinkId" (not "videoLink")
+        - "videoId" (FK reference, not "videoTitle" or "videoLinkId")
     """
     from googleapiclient.errors import HttpError
 
@@ -724,15 +842,13 @@ def fetch_comment_replies(youtube, parent_comment_id, video_title, video_id):
                 date_posted = reply_snippet['publishedAt']
                 like_count = reply_snippet['likeCount']
 
-                # Create sub-comment dictionary matching the exact structure from prompt.md
-                # Note: Field names differ from comments file
-                # Added youtubeCommentId for the reply's own unique identifier
+                # Create sub-comment dictionary with normalized structure
+                # videoId is now a FK reference to the videos table
                 sub_comment_obj = {
                     "youtubeCommentId": youtube_reply_id,
-                    "subComment": sub_comment_text,
+                    "videoId": video_id,
                     "parentCommentId": parent_comment_id,
-                    "videoTitle": video_title,
-                    "videoLinkId": video_id,
+                    "subComment": sub_comment_text,
                     "datePostSubComment": date_posted,
                     "likeCount": like_count
                 }
@@ -825,17 +941,20 @@ For more information, see README.md
             exit(1)
 
         # Step 3: Define File Paths
-        # Channel-specific output files for storing comments and sub-comments
+        # Channel-specific output files for storing videos, comments, and sub-comments
+        videos_file = f"{CONFIG['output_dir']}/{channel_id}_videos.json"
         comments_file = f"{CONFIG['output_dir']}/{channel_id}_comments.json"
         sub_comments_file = f"{CONFIG['output_dir']}/{channel_id}_sub_comments.json"
 
         # Step 4: Load Existing State
-        processed_videos_set, master_comments_list = load_state(comments_file)
+        processed_videos_set, master_videos_list = load_videos_state(videos_file)
+        master_comments_list = load_comments_state(comments_file)
         master_sub_comments_list = load_sub_comments(sub_comments_file)
 
         # Display resumption status
         if processed_videos_set:
             print(f"Resuming: Found {len(processed_videos_set)} already processed videos")
+            print(f"Existing videos: {len(master_videos_list)}")
             print(f"Existing comments: {len(master_comments_list)}")
             print(f"Existing sub-comments: {len(master_sub_comments_list)}")
         else:
@@ -856,9 +975,9 @@ For more information, see README.md
             print("Please verify your API key and network connection.")
             exit(1)
 
-        # Step 6: Fetch All Videos from Channel
+        # Step 6: Fetch All Videos with Metadata from Channel
         try:
-            all_videos = get_all_video_ids_and_titles(youtube, uploads_playlist_id)
+            all_videos = get_all_videos(youtube, uploads_playlist_id)
             print(f"Found {len(all_videos)} total videos in channel")
             print()
         except Exception as e:
@@ -869,7 +988,7 @@ For more information, see README.md
         # Step 7: Filter Out Already Processed Videos
         videos_to_process = [
             v for v in all_videos
-            if create_video_link(v['id']) not in processed_videos_set
+            if v['youtubeVideoId'] not in processed_videos_set
         ]
 
         print(f"Videos to process: {len(videos_to_process)}")
@@ -888,10 +1007,9 @@ For more information, see README.md
         failed_reply_fetches = []
 
         for video in tqdm(videos_to_process, desc="Processing videos"):
-            # Extract video data
-            video_id = video['id']
+            # Extract video ID from video metadata
+            video_id = video['youtubeVideoId']
             video_title = video['title']
-            video_link = create_video_link(video_id)
 
             # Initialize temporary lists for this video's data
             new_comments = []
@@ -900,7 +1018,7 @@ For more information, see README.md
             try:
                 # Fetch top-level comments for this video
                 comments_data, threads_with_replies = fetch_video_comments(
-                    youtube, video_id, video_title, video_link
+                    youtube, video_id
                 )
                 new_comments = comments_data
 
@@ -908,7 +1026,7 @@ For more information, see README.md
                 for parent_comment_id, reply_count in threads_with_replies:
                     try:
                         replies = fetch_comment_replies(
-                            youtube, parent_comment_id, video_title, video_id
+                            youtube, parent_comment_id, video_id
                         )
                         new_sub_comments.extend(replies)
 
@@ -918,7 +1036,6 @@ For more information, see README.md
                                 'parent_comment_id': parent_comment_id,
                                 'video_id': video_id,
                                 'video_title': video_title,
-                                'video_link': video_link,
                                 'expected_count': reply_count,
                                 'fetched_count': len(replies),
                                 'missing_count': reply_count - len(replies)
@@ -929,7 +1046,6 @@ For more information, see README.md
                             'parent_comment_id': parent_comment_id,
                             'video_id': video_id,
                             'video_title': video_title,
-                            'video_link': video_link,
                             'expected_count': reply_count,
                             'fetched_count': 0,
                             'missing_count': reply_count,
@@ -942,7 +1058,13 @@ For more information, see README.md
 
                 if error_reason == 'commentsDisabled':
                     # Comments are disabled for this video - skip it
-                    print(f"Skipping {video_title}: Comments disabled")
+                    # Still add video metadata even if comments are disabled
+                    print(f"Skipping comments for {video_title}: Comments disabled")
+                    # Add channel_id to video metadata and append to master list
+                    video['channelId'] = channel_id
+                    master_videos_list.append(video)
+                    # Save videos file atomically
+                    atomic_write_json(videos_file, master_videos_list)
                     continue
 
                 elif error_reason == 'quotaExceeded':
@@ -951,6 +1073,7 @@ For more information, see README.md
                     print("=" * 70)
                     print("⚠️  API quota exceeded. Stopping gracefully...")
                     print("=" * 70)
+                    print(f"Processed {len(master_videos_list)} videos")
                     print(f"Processed {len(master_comments_list)} comments and {len(master_sub_comments_list)} sub-comments")
                     print(f"📊 Quota used: {quota_used} units (of {CONFIG['daily_quota_limit']} daily limit)")
                     print()
@@ -970,14 +1093,17 @@ For more information, see README.md
                 continue
 
             # Atomic progress saving after successfully processing this video
+            # Add channel_id to video metadata
+            video['channelId'] = channel_id
+
             # Extend the master lists with this video's data
+            master_videos_list.append(video)
             master_comments_list.extend(new_comments)
             master_sub_comments_list.extend(new_sub_comments)
 
-            # Save comments file atomically
+            # Save all three files atomically
+            atomic_write_json(videos_file, master_videos_list)
             atomic_write_json(comments_file, master_comments_list)
-
-            # Save sub-comments file atomically
             atomic_write_json(sub_comments_file, master_sub_comments_list)
 
         # Step 9: Save Failed Reply Fetches (if any)
@@ -993,9 +1119,13 @@ For more information, see README.md
         print("=" * 70)
         print("Processing complete!")
         print("=" * 70)
+        print(f"Total videos extracted: {len(master_videos_list)}")
         print(f"Total comments extracted: {len(master_comments_list)}")
         print(f"Total sub-comments extracted: {len(master_sub_comments_list)}")
-        print(f"Data saved to: {comments_file} and {sub_comments_file}")
+        print(f"Data saved to:")
+        print(f"  - Videos: {videos_file}")
+        print(f"  - Comments: {comments_file}")
+        print(f"  - Sub-comments: {sub_comments_file}")
         print()
         print(f"📊 Quota Usage: {quota_used} units (of {CONFIG['daily_quota_limit']} daily limit)")
         print(f"   Remaining: {CONFIG['daily_quota_limit'] - quota_used} units ({((CONFIG['daily_quota_limit'] - quota_used) / CONFIG['daily_quota_limit'] * 100):.1f}%)")

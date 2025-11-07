@@ -134,7 +134,7 @@ deactivate
 Simply run the script and follow the prompts:
 
 ```bash
-python3 main.py
+python3 src/main.py
 ```
 
 You'll be prompted to enter a YouTube channel URL. The script accepts any of these formats:
@@ -149,13 +149,13 @@ You'll be prompted to enter a YouTube channel URL. The script accepts any of the
 You can also provide the channel URL directly:
 
 ```bash
-python3 main.py --channel "https://www.youtube.com/@EricWTech"
+python3 src/main.py --channel "https://www.youtube.com/@EricWTech"
 ```
 
 Override the API key from command line:
 
 ```bash
-python3 main.py --channel "https://www.youtube.com/@username" --api-key "YOUR_API_KEY"
+python3 src/main.py --channel "https://www.youtube.com/@username" --api-key "YOUR_API_KEY"
 ```
 
 ## Output
@@ -252,7 +252,7 @@ Run the SQL schema in your Supabase project:
 
 1. Open your Supabase project dashboard
 2. Navigate to **SQL Editor**
-3. Copy the contents of `schema.sql` from this repository
+3. Copy the contents of `database/schema.sql` from this repository
 4. Paste and execute in the SQL Editor
 5. Verify tables were created:
 
@@ -293,12 +293,12 @@ pip install -r requirements.txt
 
 ### Upload Script Usage
 
-The `upload_to_supabase.py` script uploads JSON files from the `output/` directory to your Supabase database.
+The `database/upload_to_supabase.py` script uploads JSON files from the `output/` directory to your Supabase database.
 
 #### Upload Specific Channel
 
 ```bash
-python3 upload_to_supabase.py --channel-id UCxxxxxx
+python3 database/upload_to_supabase.py --channel-id UCxxxxxx
 ```
 
 This uploads both comments and sub-comments for the specified channel ID.
@@ -306,7 +306,7 @@ This uploads both comments and sub-comments for the specified channel ID.
 #### Upload All Channels
 
 ```bash
-python3 upload_to_supabase.py --all
+python3 database/upload_to_supabase.py --all
 ```
 
 Processes all channels found in the `output/` directory.
@@ -314,7 +314,7 @@ Processes all channels found in the `output/` directory.
 #### Dry Run (Test Without Inserting)
 
 ```bash
-python3 upload_to_supabase.py --channel-id UCxxxxxx --dry-run
+python3 database/upload_to_supabase.py --channel-id UCxxxxxx --dry-run
 ```
 
 Validates files and shows what would be uploaded without actually inserting data.
@@ -322,7 +322,7 @@ Validates files and shows what would be uploaded without actually inserting data
 #### Custom Batch Size
 
 ```bash
-python3 upload_to_supabase.py --all --batch-size 50
+python3 database/upload_to_supabase.py --all --batch-size 50
 ```
 
 Default batch size is 100 records. Adjust if you encounter timeouts or rate limits.
@@ -330,7 +330,7 @@ Default batch size is 100 records. Adjust if you encounter timeouts or rate limi
 #### Custom Output Directory
 
 ```bash
-python3 upload_to_supabase.py --all --output-dir /path/to/output
+python3 database/upload_to_supabase.py --all --output-dir /path/to/output
 ```
 
 ### Upload Workflow
@@ -345,7 +345,7 @@ source venv/bin/activate
 python3 main.py --channel "https://www.youtube.com/@username"
 
 # 3. Upload to Supabase
-python3 upload_to_supabase.py --channel-id UCxxxxxx
+python3 database/upload_to_supabase.py --channel-id UCxxxxxx
 
 # 4. Verify in Supabase dashboard
 # Go to Table Editor and check comments/sub_comments tables
@@ -542,7 +542,7 @@ Transient network errors are automatically retried with exponential backoff.
 
 ## Advanced Configuration
 
-You can modify the `CONFIG` dictionary in `main.py` to customize:
+You can modify the `CONFIG` dictionary in `src/main.py` to customize:
 
 ```python
 CONFIG = {
@@ -558,22 +558,32 @@ CONFIG = {
 
 ```
 yt-extractor/
-├── main.py                      # Main extraction script
-├── upload_to_supabase.py        # Supabase upload script
-├── schema.sql                   # Database schema for Supabase
+├── src/                         # Core application
+│   └── main.py                  # Main extraction script
+├── database/                    # Database layer
+│   ├── migrations/
+│   │   └── 001_normalized_schema.sql  # Schema migration
+│   ├── schema.sql               # Database schema for Supabase
+│   ├── upload_to_supabase.py    # Supabase upload script
+│   └── run_migration.py         # Migration runner
+├── scripts/                     # Utility scripts
+│   ├── verify_relationships.py  # Local data validation
+│   ├── verify_supabase_data.py  # Remote data verification
+│   └── clear_old_data.py        # Data cleanup utility
+├── docs/                        # Documentation
+│   ├── README.md                # User guide (this file)
+│   ├── CLAUDE.md                # Developer guidance
+│   ├── prompt.md                # Original requirements
+│   └── SQL_AGENT_TEST_CASES.md  # SQL testing docs
+├── output/                      # Generated data (gitignored)
+│   ├── [CHANNEL_ID]_videos.json
+│   ├── [CHANNEL_ID]_comments.json
+│   └── [CHANNEL_ID]_sub_comments.json
+├── venv/                        # Python virtual environment (gitignored)
 ├── requirements.txt             # Python dependencies
 ├── .env.example                 # Environment variable template
-├── .env                         # Your API keys (not in git)
-├── .gitignore                   # Git ignore rules
-├── README.md                    # This file
-├── CLAUDE.md                    # Developer guidance
-├── prompt.md                    # Original project requirements
-├── phase-breakdown.md           # Implementation phases
-└── output/                      # Generated JSON files and logs
-    ├── [CHANNEL_ID]_comments.json
-    ├── [CHANNEL_ID]_sub_comments.json
-    ├── [CHANNEL_ID]_processing.log
-    └── [CHANNEL_ID]_failed_replies.json (if any)
+├── .env                         # Your API keys (gitignored)
+└── .gitignore                   # Git ignore rules
 ```
 
 ## Best Practices

@@ -35,23 +35,23 @@ cp .env.example .env
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 
 # Interactive mode (prompts for channel URL)
-python3 main.py
+python3 src/main.py
 
 # Command-line mode with channel URL
-python3 main.py --channel "https://www.youtube.com/@username"
+python3 src/main.py --channel "https://www.youtube.com/@username"
 
 # Override API key from command line
-python3 main.py --channel "https://www.youtube.com/@username" --api-key "YOUR_KEY"
+python3 src/main.py --channel "https://www.youtube.com/@username" --api-key "YOUR_KEY"
 ```
 
 ### Testing Different Channel URL Formats
 
 Test URL parsing with these formats:
 ```bash
-python3 main.py --channel "https://www.youtube.com/@username"          # Handle format
-python3 main.py --channel "https://www.youtube.com/channel/CHANNEL_ID" # Direct ID
-python3 main.py --channel "https://www.youtube.com/c/CustomName"       # Custom URL
-python3 main.py --channel "https://www.youtube.com/user/username"      # Legacy user
+python3 src/main.py --channel "https://www.youtube.com/@username"          # Handle format
+python3 src/main.py --channel "https://www.youtube.com/channel/CHANNEL_ID" # Direct ID
+python3 src/main.py --channel "https://www.youtube.com/c/CustomName"       # Custom URL
+python3 src/main.py --channel "https://www.youtube.com/user/username"      # Legacy user
 ```
 
 ### Dependency Management
@@ -68,7 +68,7 @@ python3 -m pip list
 
 ### Single-File Monolithic Design
 
-The entire application is contained in `main.py` (~1000 lines) with clear section boundaries:
+The entire application is contained in `src/main.py` (~1000 lines) with clear section boundaries:
 - **Imports** (lines 8-26): External dependencies and environment setup
 - **Configuration** (lines 28-41): Centralized CONFIG dictionary
 - **API Setup** (lines 43-92): YouTube service initialization and validation
@@ -176,7 +176,7 @@ The entire application is contained in `main.py` (~1000 lines) with clear sectio
 
 ### Modifying API Configuration
 
-Edit `CONFIG` dictionary in main.py:
+Edit `CONFIG` dictionary in src/main.py:
 ```python
 CONFIG = {
     'output_dir': 'output',           # Change output location
@@ -212,11 +212,11 @@ python3 -c "from main import get_channel_id_from_url; print(get_channel_id_from_
 
 ```bash
 # Start processing a large channel
-python3 main.py --channel "https://youtube.com/@largechannel"
+python3 src/main.py --channel "https://youtube.com/@largechannel"
 
 # Interrupt with Ctrl+C after a few videos
 # Restart to verify resume
-python3 main.py --channel "https://youtube.com/@largechannel"
+python3 src/main.py --channel "https://youtube.com/@largechannel"
 # Should skip already processed videos
 ```
 
@@ -233,20 +233,32 @@ python3 main.py --channel "https://youtube.com/@largechannel"
 
 ```
 yt-extractor/
-├── main.py                       # Single monolithic application file
-├── requirements.txt              # Python dependencies (3 packages)
-├── .env.example                  # Template for API key
-├── .env                         # User's API key (gitignored)
-├── .gitignore                   # Excludes venv, .env, output/, etc.
-├── README.md                    # User-facing documentation
-├── prompt.md                    # Original project requirements
-├── CLAUDE.md                    # This file
+├── src/                         # Core application
+│   └── main.py                  # Single monolithic application file
+├── database/                    # Database layer
+│   ├── migrations/
+│   │   └── 001_normalized_schema.sql  # Schema migration
+│   ├── schema.sql               # Database schema for Supabase
+│   ├── upload_to_supabase.py    # Supabase upload script
+│   └── run_migration.py         # Migration runner
+├── scripts/                     # Utility scripts
+│   ├── verify_relationships.py  # Local data validation
+│   ├── verify_supabase_data.py  # Remote data verification
+│   └── clear_old_data.py        # Data cleanup utility
+├── docs/                        # Documentation
+│   ├── README.md                # User-facing documentation
+│   ├── CLAUDE.md                # This file (developer guidance)
+│   ├── prompt.md                # Original project requirements
+│   └── SQL_AGENT_TEST_CASES.md  # SQL testing docs
+├── output/                      # Generated JSON files (gitignored)
+│   ├── [CHANNEL_ID]_videos.json
+│   ├── [CHANNEL_ID]_comments.json
+│   └── [CHANNEL_ID]_sub_comments.json
 ├── venv/                        # Python virtual environment (gitignored)
-└── output/                      # Generated JSON files (gitignored)
-    ├── [CHANNEL_ID]_comments.json
-    ├── [CHANNEL_ID]_sub_comments.json
-    ├── [CHANNEL_ID]_processing.log (if logging added)
-    └── [CHANNEL_ID]_failed_replies.json (if discrepancies)
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Template for API key and Supabase credentials
+├── .env                         # User's credentials (gitignored)
+└── .gitignore                   # Excludes venv, .env, output/, etc.
 ```
 
 ## Dependencies
